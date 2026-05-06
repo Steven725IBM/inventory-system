@@ -1,0 +1,364 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="UTF-8">
+<title>IOD Inventory</title>
+
+<style>
+body { font-family: Arial, sans-serif; margin: 20px; }
+h1 { margin-bottom: 5px; }
+
+table {
+    border-collapse: collapse;
+    width: 100%;
+    margin-top: 10px;
+}
+
+th, td {
+    border: 1px solid #ccc;
+    padding: 6px 8px;
+}
+
+th { background-color: #f0f0f0; cursor: pointer; }
+
+.top-bar { text-align: right; margin-bottom: 15px; }
+.hint { color: #666; margin-bottom: 10px; }
+
+button { padding: 4px 8px; cursor: pointer; }
+</style>
+</head>
+
+<body>
+
+<!-- LOGIN BAR -->
+<div class="top-bar">
+{% if current_user %}
+    Logged in as <strong>{{ current_user.username }}</strong> ({{ current_user.role }})
+    |
+    <a href="/logout">Logout</a>
+{% else %}
+    <a href="/login">Login</a>
+{% endif %}
+</div>
+
+<h1>IOD Inventory <span style="font-size:0.6em;color:#666;">v1.0</span></h1>
+
+{% if not current_user %}
+<div class="hint">Log in to make inventory changes.</div>
+{% endif %}
+
+<hr>
+
+<!-- CREATE USER -->
+{% if current_user and current_user.role == "admin" %}
+<h2>Create User</h2>
+<form action="/users/create" method="post">
+    <input name="username" placeholder="Username" required>
+    <input name="password" type="password" placeholder="Password" required>
+
+    <select name="role">
+        <option value="user">User</option>
+        <option value="viewer">Viewer</option>
+    </select>
+
+    <button type="submit">Create User</button>
+</form>
+<hr>
+{% endif %}
+
+<!-- RECEIVE -->
+{% if current_user and current_user.role != "viewer" %}
+<h2>Receive Inventory</h2>
+<form id="receive-form">
+
+<select name="item_id" id="receive-item">
+{% for item in items %}
+<option value="{{ item.id }}" data-part="{{ item.part_number or '' }}">
+{{ item.name }}
+</option>
+{% endfor %}
+</select>
+
+<input type="text" name="part_number" id="receive-part" placeholder="Part Number">
+
+<select name="location_id">
+{% for location in locations %}
+<option value="{{ location.id }}">{{ location.name }}</option>
+{% endfor %}
+</select>
+
+<input type="number" name="quantity">
+<button>Receive</button>
+</form>
+{% endif %}
+
+<!-- ISSUE -->
+{% if current_user and current_user.role != "viewer" %}
+<h2>Issue Inventory</h2>
+<form id="issue-form">
+
+<select name="item_id" id="issue-item">
+{% for item in items %}
+<option value="{{ item.id }}" data-part="{{ item.part_number or '' }}">
+{{ item.name }}
+</option>
+{% endfor %}
+</select>
+
+<input type="text" name="part_number" id="issue-part" placeholder="Part Number">
+
+<select name="location_id">
+{% for location in locations %}
+<option value="{{ location.id }}">{{ location.name }}</option>
+{% endfor %}
+</select>
+
+<input type="number" name="quantity">
+<input type="text" name="note">
+<button>Issue</button>
+</form>
+{% endif %}
+
+<hr>
+
+<!-- INVENTORY -->
+<h2>Current Inventory</h2>
+
+<input id="inv-filter-item" placeholder="Filter item">
+<input id="inv-filter-part" placeholder="Filter part number">
+<input id="inv-filter-location" placeholder="Filter location">
+
+<table id="inventory-table">
+<thead>
+<tr>
+<th data-sort="text">Item</th>
+<th data-sort="text">Part Number</th>
+<th data-sort="text">Location</th>
+<th data-sort="number">Qty</th>
+</tr>
+</thead>
+
+<tbody>
+{% for inventory, item, location in inventory_rows %}
+<tr
+data-item="{{ item.name|lower }}"
+data-part="{{ (item.part_number or '')|lower }}"
+data-location="{{ location.name|lower }}"
+>
+<td>{{ item.name }}</td>
+<td>{{ item.part_number or "—" }}</td>
+<td>{{ location.name }}</td>
+<td>{{ inventory.quantity }}</td>
+</tr>
+{% endfor %}
+</tbody>
+</table>
+
+<hr>
+
+<!-- HISTORY -->
+<h2>Inventory History</h2>
+
+<input id="hist-filter-item" placeholder="Filter item">
+<input id="hist-filter-part" placeholder="Filter part number">
+<input id="hist-filter-location" placeholder="Filter location">
+<input id="hist-filter-note" placeholder="Filter note">
+
+<table id="history-table">
+<thead>
+<tr>
+<th data-sort="date">Date</th>
+<th data-sort="text">Item</th>
+<th data-sort="text">Part Number</th>
+<th data-sort="text">Location</th>
+<th data-sort="number">Change</th>
+<th>Note</th>
+{% if current_user and current_user.role != "viewer" %}
+<th>Action</th>
+{% endif %}
+</tr>
+</thead>
+
+<tbody>
+{% for history, item, location in history_rows %}
+<tr
+data-item="{{ item.name|lower }}"
+data-part="{{ (item.part_number or '')|lower }}"
+data-location="{{ location.name|lower }}"
+data-note="{{ (history.note or '')|lower }}"
+>
+<td>{{ history.created_at }}</td>
+<td>{{ item.name }}</td>
+<td>{{ item.part_number or "—" }}</td>
+<td>{{ location.name }}</td>
+<td>{{ history.change }}</td>
+
+<td>
+<input id="note-{{ history.id }}"
+value="{{ history.note or '' }}"
+{% if not current_user or current_user.role=="viewer" %}readonly{% endif %}>
+</td>
+
+{% if current_user and current_user.role != "viewer" %}
+<td>
+<button class="save-note-btn" data-id="{{ history.id }}">Save</button>
+</td>
+{% endif %}
+</tr>
+{% endfor %}
+</tbody>
+</table>
+
+
+<script>
+
+/* PART AUTO-FILL */
+function wirePartAutoFill(selectId, inputId) {
+    const select = document.getElementById(selectId);
+    const input = document.getElementById(inputId);
+
+    if (!select || !input) return;
+
+    function update() {
+        input.value = select.options[select.selectedIndex].dataset.part || "";
+    }
+
+    select.addEventListener("change", update);
+    update();
+}
+
+wirePartAutoFill("receive-item","receive-part");
+wirePartAutoFill("issue-item","issue-part");
+
+
+/* FILTERING */
+function filterTable(tableId, filters) {
+    document.querySelectorAll(`#${tableId} tbody tr`).forEach(row => {
+        const visible = Object.keys(filters).every(key =>
+            row.dataset[key].includes(filters[key].value.toLowerCase())
+        );
+        row.style.display = visible ? "" : "none";
+    });
+}
+
+const invItem = document.getElementById("inv-filter-item");
+const invPart = document.getElementById("inv-filter-part");
+const invLoc  = document.getElementById("inv-filter-location");
+
+[invItem, invPart, invLoc].forEach(el =>
+    el?.addEventListener("input", () =>
+        filterTable("inventory-table", {
+            item: invItem,
+            part: invPart,
+            location: invLoc
+        })
+    )
+);
+
+const histItem = document.getElementById("hist-filter-item");
+const histPart = document.getElementById("hist-filter-part");
+const histLoc  = document.getElementById("hist-filter-location");
+const histNote = document.getElementById("hist-filter-note");
+
+[histItem, histPart, histLoc, histNote].forEach(el =>
+    el?.addEventListener("input", () =>
+        filterTable("history-table", {
+            item: histItem,
+            part: histPart,
+            location: histLoc,
+            note: histNote
+        })
+    )
+);
+
+
+/* SORTING */
+function enableSorting(tableId) {
+    const table = document.getElementById(tableId);
+    const headers = table.querySelectorAll("th[data-sort]");
+
+    headers.forEach((header, index) => {
+        let asc = true;
+
+        header.addEventListener("click", () => {
+            const type = header.dataset.sort;
+            const rows = Array.from(table.querySelectorAll("tbody tr"));
+
+            rows.sort((a, b) => {
+                let A = a.children[index].innerText;
+                let B = b.children[index].innerText;
+
+                if (type === "number") {
+                    return asc ? A - B : B - A;
+                }
+
+                if (type === "date") {
+                    return asc
+                        ? new Date(A) - new Date(B)
+                        : new Date(B) - new Date(A);
+                }
+
+                return asc
+                    ? A.localeCompare(B)
+                    : B.localeCompare(A);
+            });
+
+            asc = !asc;
+
+            const tbody = table.querySelector("tbody");
+            rows.forEach(r => tbody.appendChild(r));
+        });
+    });
+}
+
+enableSorting("inventory-table");
+enableSorting("history-table");
+
+
+/* FORM SUBMIT */
+function wireForm(id,url){
+    const f=document.getElementById(id);
+    if(!f) return;
+
+    f.addEventListener("submit",async e=>{
+        e.preventDefault();
+        const r=await fetch(url,{method:"POST",body:new FormData(f)});
+
+        if(r.ok){
+            const msg=document.createElement("span");
+            msg.textContent=" ✅ Saved";
+            msg.style.color="green";
+            f.appendChild(msg);
+
+            setTimeout(()=>location.reload(),800);
+        }
+    });
+}
+
+wireForm("receive-form","/inventory/receive");
+wireForm("issue-form","/inventory/issue");
+
+
+/* SAVE NOTE */
+document.querySelectorAll(".save-note-btn").forEach(btn=>{
+    btn.onclick=async ()=>{
+        const id=btn.dataset.id;
+        const val=document.getElementById(`note-${id}`).value;
+
+        const d=new FormData();
+        d.append("note",val);
+
+        const r=await fetch(`/inventory/history/${id}/note`,
+            {method:"PUT",body:d});
+
+        if(r.ok){
+            btn.textContent="✅ Saved";
+            setTimeout(()=>location.reload(),800);
+        }
+    };
+});
+
+</script>
+
+</body>
+</html>
