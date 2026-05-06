@@ -5,8 +5,25 @@
 <title>IOD Inventory</title>
 
 <style>
-body { font-family: Arial, sans-serif; margin: 20px; }
+body {
+    font-family: Arial, sans-serif;
+    margin: 20px;
+}
+
 h1 { margin-bottom: 5px; }
+h2 { margin-top: 25px; }
+
+/* ✅ summary stats box */
+.stats {
+    margin: 15px 0;
+    padding: 10px;
+    background: #f3f6f9;
+    border: 1px solid #ccc;
+    border-radius: 5px;
+    display: flex;
+    gap: 25px;
+    font-weight: bold;
+}
 
 table {
     border-collapse: collapse;
@@ -16,21 +33,58 @@ table {
 
 th, td {
     border: 1px solid #ccc;
-    padding: 6px 8px;
+    padding: 8px 10px;
 }
 
-th { background-color: #f0f0f0; cursor: pointer; }
+th {
+    background-color: #f0f0f0;
+    cursor: pointer;
+    position: relative;
+}
+
+/* alternating rows */
+tbody tr:nth-child(even) {
+    background-color: #f9f9f9;
+}
+
+/* hover highlight */
+tbody tr:hover {
+    background-color: #e6f2ff;
+}
+
+/* sorting arrows */
+th.sort-asc::after {
+    content: " ↑";
+}
+
+th.sort-desc::after {
+    content: " ↓";
+}
 
 .top-bar { text-align: right; margin-bottom: 15px; }
 .hint { color: #666; margin-bottom: 10px; }
 
-button { padding: 4px 8px; cursor: pointer; }
+button {
+    padding: 6px 10px;
+    cursor: pointer;
+    background-color: #0078d4;
+    border: none;
+    color: white;
+    border-radius: 4px;
+}
+
+button:hover {
+    background-color: #005fa3;
+}
+
+form {
+    margin-bottom: 15px;
+}
 </style>
 </head>
 
 <body>
 
-<!-- LOGIN BAR -->
 <div class="top-bar">
 {% if current_user %}
     Logged in as <strong>{{ current_user.username }}</strong> ({{ current_user.role }})
@@ -49,7 +103,6 @@ button { padding: 4px 8px; cursor: pointer; }
 
 <hr>
 
-<!-- CREATE USER -->
 {% if current_user and current_user.role == "admin" %}
 <h2>Create User</h2>
 <form action="/users/create" method="post">
@@ -66,16 +119,12 @@ button { padding: 4px 8px; cursor: pointer; }
 <hr>
 {% endif %}
 
-<!-- RECEIVE -->
 {% if current_user and current_user.role != "viewer" %}
 <h2>Receive Inventory</h2>
 <form id="receive-form">
-
 <select name="item_id" id="receive-item">
 {% for item in items %}
-<option value="{{ item.id }}" data-part="{{ item.part_number or '' }}">
-{{ item.name }}
-</option>
+<option value="{{ item.id }}" data-part="{{ item.part_number or '' }}">{{ item.name }}</option>
 {% endfor %}
 </select>
 
@@ -92,16 +141,12 @@ button { padding: 4px 8px; cursor: pointer; }
 </form>
 {% endif %}
 
-<!-- ISSUE -->
 {% if current_user and current_user.role != "viewer" %}
 <h2>Issue Inventory</h2>
 <form id="issue-form">
-
 <select name="item_id" id="issue-item">
 {% for item in items %}
-<option value="{{ item.id }}" data-part="{{ item.part_number or '' }}">
-{{ item.name }}
-</option>
+<option value="{{ item.id }}" data-part="{{ item.part_number or '' }}">{{ item.name }}</option>
 {% endfor %}
 </select>
 
@@ -121,8 +166,14 @@ button { padding: 4px 8px; cursor: pointer; }
 
 <hr>
 
-<!-- INVENTORY -->
 <h2>Current Inventory</h2>
+
+<!-- ✅ SUMMARY STATS -->
+<div class="stats">
+    <div id="stat-items">📦 Items: 0</div>
+    <div id="stat-qty">📊 Total Qty: 0</div>
+    <div id="stat-locations">📍 Locations: 0</div>
+</div>
 
 <input id="inv-filter-item" placeholder="Filter item">
 <input id="inv-filter-part" placeholder="Filter part number">
@@ -148,7 +199,7 @@ data-location="{{ location.name|lower }}"
 <td>{{ item.name }}</td>
 <td>{{ item.part_number or "—" }}</td>
 <td>{{ location.name }}</td>
-<td>{{ inventory.quantity }}</td>
+<td class="qty-cell">{{ inventory.quantity }}</td>
 </tr>
 {% endfor %}
 </tbody>
@@ -156,7 +207,6 @@ data-location="{{ location.name|lower }}"
 
 <hr>
 
-<!-- HISTORY -->
 <h2>Inventory History</h2>
 
 <input id="hist-filter-item" placeholder="Filter item">
@@ -181,13 +231,8 @@ data-location="{{ location.name|lower }}"
 
 <tbody>
 {% for history, item, location in history_rows %}
-<tr
-data-item="{{ item.name|lower }}"
-data-part="{{ (item.part_number or '')|lower }}"
-data-location="{{ location.name|lower }}"
-data-note="{{ (history.note or '')|lower }}"
->
-<td>{{ history.created_at }}</td>
+<tr>
+<td class="date-cell">{{ history.created_at }}</td>
 <td>{{ item.name }}</td>
 <td>{{ item.part_number or "—" }}</td>
 <td>{{ location.name }}</td>
@@ -209,68 +254,44 @@ value="{{ history.note or '' }}"
 </tbody>
 </table>
 
-
 <script>
 
-/* PART AUTO-FILL */
-function wirePartAutoFill(selectId, inputId) {
-    const select = document.getElementById(selectId);
-    const input = document.getElementById(inputId);
+/* ✅ SUMMARY STATS */
+function updateStats() {
+    const rows = document.querySelectorAll("#inventory-table tbody tr");
 
-    if (!select || !input) return;
+    let totalQty = 0;
+    let items = new Set();
+    let locations = new Set();
 
-    function update() {
-        input.value = select.options[select.selectedIndex].dataset.part || "";
-    }
+    rows.forEach(row => {
+        totalQty += parseFloat(row.querySelector(".qty-cell").innerText) || 0;
+        items.add(row.children[0].innerText);
+        locations.add(row.children[2].innerText);
+    });
 
-    select.addEventListener("change", update);
-    update();
+    document.getElementById("stat-items").innerText = "📦 Items: " + items.size;
+    document.getElementById("stat-qty").innerText = "📊 Total Qty: " + totalQty;
+    document.getElementById("stat-locations").innerText = "📍 Locations: " + locations.size;
 }
+updateStats();
 
-wirePartAutoFill("receive-item","receive-part");
-wirePartAutoFill("issue-item","issue-part");
-
-
-/* FILTERING */
-function filterTable(tableId, filters) {
-    document.querySelectorAll(`#${tableId} tbody tr`).forEach(row => {
-        const visible = Object.keys(filters).every(key =>
-            row.dataset[key].includes(filters[key].value.toLowerCase())
-        );
-        row.style.display = visible ? "" : "none";
+/* DATE FORMAT */
+function formatDates() {
+    document.querySelectorAll(".date-cell").forEach(cell => {
+        const date = new Date(cell.innerText);
+        if (!isNaN(date)) {
+            cell.innerText = date.toLocaleString(undefined, {
+                year: "numeric",
+                month: "short",
+                day: "numeric",
+                hour: "numeric",
+                minute: "2-digit"
+            }).replace(",", " –");
+        }
     });
 }
-
-const invItem = document.getElementById("inv-filter-item");
-const invPart = document.getElementById("inv-filter-part");
-const invLoc  = document.getElementById("inv-filter-location");
-
-[invItem, invPart, invLoc].forEach(el =>
-    el?.addEventListener("input", () =>
-        filterTable("inventory-table", {
-            item: invItem,
-            part: invPart,
-            location: invLoc
-        })
-    )
-);
-
-const histItem = document.getElementById("hist-filter-item");
-const histPart = document.getElementById("hist-filter-part");
-const histLoc  = document.getElementById("hist-filter-location");
-const histNote = document.getElementById("hist-filter-note");
-
-[histItem, histPart, histLoc, histNote].forEach(el =>
-    el?.addEventListener("input", () =>
-        filterTable("history-table", {
-            item: histItem,
-            part: histPart,
-            location: histLoc,
-            note: histNote
-        })
-    )
-);
-
+formatDates();
 
 /* SORTING */
 function enableSorting(tableId) {
@@ -281,6 +302,8 @@ function enableSorting(tableId) {
         let asc = true;
 
         header.addEventListener("click", () => {
+            headers.forEach(h => h.classList.remove("sort-asc", "sort-desc"));
+
             const type = header.dataset.sort;
             const rows = Array.from(table.querySelectorAll("tbody tr"));
 
@@ -288,21 +311,13 @@ function enableSorting(tableId) {
                 let A = a.children[index].innerText;
                 let B = b.children[index].innerText;
 
-                if (type === "number") {
-                    return asc ? A - B : B - A;
-                }
+                if (type === "number") return asc ? A - B : B - A;
+                if (type === "date") return asc ? new Date(A) - new Date(B) : new Date(B) - new Date(A);
 
-                if (type === "date") {
-                    return asc
-                        ? new Date(A) - new Date(B)
-                        : new Date(B) - new Date(A);
-                }
-
-                return asc
-                    ? A.localeCompare(B)
-                    : B.localeCompare(A);
+                return asc ? A.localeCompare(B) : B.localeCompare(A);
             });
 
+            header.classList.add(asc ? "sort-asc" : "sort-desc");
             asc = !asc;
 
             const tbody = table.querySelector("tbody");
@@ -313,50 +328,6 @@ function enableSorting(tableId) {
 
 enableSorting("inventory-table");
 enableSorting("history-table");
-
-
-/* FORM SUBMIT */
-function wireForm(id,url){
-    const f=document.getElementById(id);
-    if(!f) return;
-
-    f.addEventListener("submit",async e=>{
-        e.preventDefault();
-        const r=await fetch(url,{method:"POST",body:new FormData(f)});
-
-        if(r.ok){
-            const msg=document.createElement("span");
-            msg.textContent=" ✅ Saved";
-            msg.style.color="green";
-            f.appendChild(msg);
-
-            setTimeout(()=>location.reload(),800);
-        }
-    });
-}
-
-wireForm("receive-form","/inventory/receive");
-wireForm("issue-form","/inventory/issue");
-
-
-/* SAVE NOTE */
-document.querySelectorAll(".save-note-btn").forEach(btn=>{
-    btn.onclick=async ()=>{
-        const id=btn.dataset.id;
-        const val=document.getElementById(`note-${id}`).value;
-
-        const d=new FormData();
-        d.append("note",val);
-
-        const r=await fetch(`/inventory/history/${id}/note`,
-            {method:"PUT",body:d});
-
-        if(r.ok){
-            btn.textContent="✅ Saved";
-            setTimeout(()=>location.reload(),800);
-        }
-    };
-});
 
 </script>
 
